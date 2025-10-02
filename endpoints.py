@@ -17,7 +17,7 @@ from sm2 import update_sm2
 router = APIRouter()
 
 @router.post("/session")
-def create_session():
+async def create_session():
     session_id = uuid.uuid4()
     session = SQLAlchemySession(session_id=session_id.__str__(), engine=db_engine, create_tables=True)
     app.state.sessions[session_id] = session
