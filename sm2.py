@@ -35,7 +35,7 @@ async def update_topic(db: AsyncSession, ai_summary: ReviewResponse, topic: Topi
     if topic.created_date is None:
         topic.created_date = date.today()
     topic.next_repetition = date.today() + timedelta(days=topic.interval_days)
-    if topic.topic is None:
+    if topic.topic == "temp":
         topic.topic = ai_summary.topic
 
     topic = await db.merge(topic)
@@ -49,7 +49,8 @@ async def create_repetition(db: AsyncSession, ai_summary: ReviewResponse, score:
         topic_id=topic.id,
         review_date=date.today(),
         score=score,
-        focus=ai_summary.focus
+        repeat=ai_summary.repeat,
+        next=ai_summary.next
     )
 
     db.add(repetition)

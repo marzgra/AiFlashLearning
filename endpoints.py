@@ -5,7 +5,7 @@ from fastapi import Body, Request, APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_client import run_agent, summary
+from ai_client import run_agent, get_ai_summary
 from database import db_engine, get_topic, get_db
 from main import app
 from session_handler import get_session
@@ -27,18 +27,21 @@ async def chat(session_id: str,
                user_input: str = Body(..., embed=True)):
     session = get_session(session_id)
     return StreamingResponse(event_generator(user_input, session, request), media_type="text/event-stream")
+    #  for debug
+    # return await event_generator(user_input, session, request)
 
 
 @router.get("/session/{session_id}/close")
 async def end_session(session_id: str, db: AsyncSession = Depends(get_db)):
     session = get_session(session_id)
-    ai_summary = await summary(session)
+    ai_summary = await get_ai_summary(session)
     topic = await get_topic(db, session_id)
     topic = await update_topic_with_sm2(db, topic, ai_summary)
     return {
         "topic": topic.topic,
         "score": ai_summary.score,
-        "focus": ai_summary.focus
+        "repeat": ai_summary.repeat,
+        "next": ai_summary.next
     }
 
 
@@ -55,3 +58,5 @@ async def event_generator(prompt: str,
             print("Połączenie przerwane przez klienta")
             break
         yield f"data: {chunk}\n\n"
+    #  for debug
+    # return await run_agent(prompt, session)
