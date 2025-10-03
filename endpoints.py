@@ -7,9 +7,7 @@ from fastapi.responses import StreamingResponse
 from agents.extensions.memory.sqlalchemy_session import SQLAlchemySession
 
 from ai_client import run_agent, summary
-from config import SESSIONS_DIR
 from database import db_engine
-from schemas import Review
 from session_handler import get_session
 from config import app
 from sm2 import update_sm2
@@ -36,16 +34,13 @@ async def chat(session_id: str,
 async def end_session(session_id: str):
     session = get_session(session_id)
     ai_summary = await summary(session)
-    review = Review(session_id = session_id,
-                    topic = ai_summary.topic,
-                    last_review = datetime.now(),
-                    score = ai_summary.score)
-    update_sm2(review, ai_summary.score)
+    # review =review
+    # update_sm2(review, ai_summary.score)
 
 
 @router.get("/history")
 def list_conversations():
-    return [f.replace(".db", "") for f in os.listdir(SESSIONS_DIR) if f.endswith(".db")]
+    return []
 
 
 async def event_generator(prompt: str,
