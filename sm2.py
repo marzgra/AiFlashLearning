@@ -1,26 +1,57 @@
-from datetime import date
+from datetime import date, timedelta
 
-from schemas import Review
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from database import Topic, Repetition
+from schemas import ReviewResponse
 
-def update_sm2(review: Review, score: float):
+async def update_topic_with_sm2(db: AsyncSession, topic: Topic, ai_summary: ReviewResponse):
     # score: 0..5 (float albo int)
-    score = float(score)
+    score = float(ai_summary.score)
     if score < 3:
-        review.repetitions = 0
-        review.interval_days = 1
-        review.ease_factor = max(1.3, review.ease_factor - 0.2)
+        topic.repetitions = 0
+        topic.interval_days = 1
+        topic.ease_factor = max(1.3, topic.ease_factor - 0.2)
     else:
-        review.repetitions += 1
-        if review.repetitions == 1:
-            review.interval_days = 1
-        elif review.repetitions == 2:
-            review.interval_days = 6
+        topic.repetitions += 1
+        if topic.repetitions == 1:
+            topic.interval_days = 1
+        elif topic.repetitions == 2:
+            topic.interval_days = 6
         else:
-            review.interval_days = int(round(review.interval_days * review.ease_factor))
+            topic.interval_days = int(round(topic.interval_days * topic.ease_factor))
         # standardowa aktualizacja EF:
-        review.ease_factor += (0.1 - (5 - score) * (0.08 + (5 - score) * 0.02))
-        if review.ease_factor < 1.3:
-            review.ease_factor = 1.3
-    review.created_at = date.today()
-    review.score = score
+        topic.ease_factor += (0.1 - (5 - score) * (0.08 + (5 - score) * 0.02))
+        if topic.ease_factor < 1.3:
+            topic.ease_factor = 1.3
+
+    topic = await update_topic(db, ai_summary, topic)
+    await create_repetition(db, ai_summary, score, topic)
+
+    return topic
+
+
+async def update_topic(db: AsyncSession, ai_summary: ReviewResponse, topic: Topic):
+    if topic.created_date is None:
+        topic.created_date = date.today()
+    topic.next_repetition = date.today() + timedelta(days=topic.interval_days)
+    if topic.topic is None:
+        topic.topic = ai_summary.topic
+
+    topic = await db.merge(topic)
+    await db.commit()
+    await db.refresh(topic)
+    return topic
+
+
+async def create_repetition(db: AsyncSession, ai_summary: ReviewResponse, score: float, topic: Topic):
+    repetition = Repetition(
+        topic_id=topic.id,
+        review_date=date.today(),
+        score=score,
+        focus=ai_summary.focus
+    )
+
+    db.add(repetition)
+    await db.commit()
+    await db.refresh(repetition)

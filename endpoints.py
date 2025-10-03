@@ -1,16 +1,15 @@
-import os
 import uuid
-from datetime import datetime
 
-from fastapi import Body, Request, APIRouter
-from fastapi.responses import StreamingResponse
 from agents.extensions.memory.sqlalchemy_session import SQLAlchemySession
+from fastapi import Body, Request, APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_client import run_agent, summary
-from database import db_engine
+from database import db_engine, get_topic, get_db
+from main import app
 from session_handler import get_session
-from config import app
-from sm2 import update_sm2
+from sm2 import update_topic_with_sm2
 
 router = APIRouter()
 
@@ -31,11 +30,16 @@ async def chat(session_id: str,
 
 
 @router.get("/session/{session_id}/close")
-async def end_session(session_id: str):
+async def end_session(session_id: str, db: AsyncSession = Depends(get_db)):
     session = get_session(session_id)
     ai_summary = await summary(session)
-    # review =review
-    # update_sm2(review, ai_summary.score)
+    topic = await get_topic(db, session_id)
+    topic = await update_topic_with_sm2(db, topic, ai_summary)
+    return {
+        "topic": topic.topic,
+        "score": ai_summary.score,
+        "focus": ai_summary.focus
+    }
 
 
 @router.get("/history")
