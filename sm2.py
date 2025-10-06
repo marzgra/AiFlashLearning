@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,8 +33,9 @@ async def update_topic_with_sm2(db: AsyncSession, topic: Topic, ai_summary: Revi
 
 async def update_topic(db: AsyncSession, ai_summary: ReviewResponse, topic: Topic):
     if topic.created_date is None:
-        topic.created_date = date.today()
-    topic.next_repetition = date.today() + timedelta(days=topic.interval_days)
+        topic.created_date = datetime.today()
+    topic.next_repetition = datetime.today() + timedelta(days=topic.interval_days)
+    topic.has_opened_session = False
     if topic.topic == "temp":
         topic.topic = ai_summary.topic
 
@@ -47,7 +48,7 @@ async def update_topic(db: AsyncSession, ai_summary: ReviewResponse, topic: Topi
 async def create_repetition(db: AsyncSession, ai_summary: ReviewResponse, score: float, topic: Topic):
     repetition = Repetition(
         topic_id=topic.id,
-        review_date=date.today(),
+        review_date=datetime.today(),
         score=score,
         repeat=ai_summary.repeat,
         next=ai_summary.next

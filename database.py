@@ -1,11 +1,18 @@
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, select
-from sqlalchemy.orm import sessionmaker, declarative_base
+from pydantic import BaseModel
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, select, func, Boolean
+from sqlalchemy.orm import sessionmaker, declarative_base, Mapped, mapped_column
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.sql.expression import desc
+
+from schemas import PageParams, PagedResponseSchema, T
 
 SQLALCHEMY_DATABASE_URL = "sqlite+aiosqlite:///./app.db"
-db_engine = create_async_engine(SQLALCHEMY_DATABASE_URL)
+db_engine = create_async_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"timeout": 30}
+)
 Base = declarative_base()
 
 
@@ -26,11 +33,12 @@ class Topic(Base):
     next_repetition = Column(DateTime, nullable=False)
     interval_days = Column(Integer, nullable=False)
     ease_factor = Column(Integer, nullable=False)
+    has_opened_session = Column(Boolean, nullable=False)
 
 class Repetition(Base):
     __tablename__ = "session_repetition"
     id = Column(Integer, primary_key=True, index=True)
-    topic_id = Column(Integer, ForeignKey("session_topic.id", ondelete="CASCADE"))
+    topic_id: Mapped[Integer] = mapped_column(ForeignKey("session_topic.id"))
     review_date = Column(DateTime, nullable=False)
     score = Column(Integer, nullable=False)
     repeat = Column(String, nullable=True)
@@ -58,12 +66,114 @@ async def get_topic(db: AsyncSession, session_id: str):
         created_date = datetime.now(),
         next_repetition = datetime.now(),
         interval_days = 0,
-        ease_factor = 1
+        ease_factor = 1,
+        has_opened_session = True
     )
     db.add(topic)
     await db.flush()  # add to the session but don't commit
     await db.refresh(topic)  # Ensure all attributes are loaded
     return topic
+
+
+def get_history_query():
+    latest_repetition_subq = select(
+        Repetition.topic_id,
+        func.max(Repetition.review_date).label('max_review_date')
+    ).group_by(
+        Repetition.topic_id
+    ).subquery()
+
+    latest_repetition = select(
+        Repetition.topic_id,
+        Repetition.repeat,
+        Repetition.score,
+        Repetition.review_date
+    ).join(
+        latest_repetition_subq,
+        (Repetition.topic_id == latest_repetition_subq.c.topic_id) &
+        (Repetition.review_date == latest_repetition_subq.c.max_review_date)
+    ).subquery()
+
+    query = select(
+        Topic.session_id,
+        Topic.topic,
+        Topic.repetitions,
+        Topic.created_date,
+        Topic.next_repetition,
+        latest_repetition.c.repeat,
+        latest_repetition.c.score,
+        latest_repetition.c.review_date
+    ).outerjoin(
+        latest_repetition,
+        Topic.id == latest_repetition.c.topic_id
+    )
+
+    return query
+
+
+def today_review():
+    return get_history_query().where(
+        func.date(Topic.next_repetition) <= datetime.now().date()
+    )
+
+
+async def paginate(page_params: PageParams, query, db: AsyncSession, ResponseSchema: BaseModel) -> PagedResponseSchema[T]:
+    # Get total count
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    # Get paginated results
+    paginated_query = query.offset((page_params.page - 1) * page_params.size).limit(page_params.size)
+    result = await db.execute(paginated_query)
+    items = result.all()
+
+    return PagedResponseSchema(
+        total=total,
+        page=page_params.page,
+        size=page_params.size,
+        results=[ResponseSchema.from_orm(item) for item in items],
+    )
+
+async def update_stats(db: AsyncSession):
+    yesterday = datetime.now().date() - timedelta(days=1)
+
+    result = await db.execute(
+        select(Streak)
+        .where(func.date(Streak.last_session_date) == yesterday)
+    )
+    streak = result.scalars().first()
+
+    # If not found, get the streak with the latest last_session_date
+    if not streak:
+        result = await (db.execute(get_stats_query()))
+        streak = result.scalars().first()
+
+    if not streak:
+        streak = Streak(current_streak=0, longest_streak=0, last_session_date=datetime.now())
+        db.add(streak)
+        await db.flush()
+
+    streak.current_streak += 1
+    streak.last_session_date = datetime.now()
+    streak.longest_streak = max(streak.longest_streak, streak.current_streak)
+
+
+async def get_stats(db: AsyncSession):
+    result = await (db.execute(get_stats_query()))
+    return result.scalars().first()
+
+
+def get_stats_query():
+    return (select(Streak)
+            .order_by(desc(Streak.last_session_date))
+            .limit(1))
+
+
+async def open_session(db: AsyncSession, session_id: str):
+    topic = await get_topic(db, session_id)
+    topic.has_opened_session = True
+    await db.commit()
 
 
 async def get_db():
