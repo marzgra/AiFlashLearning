@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, TypeVar, Generic, List
 
-from pydantic import BaseModel, conint, Field
+from pydantic import BaseModel, Field
 from pydantic.v1.generics import GenericModel
 
 

@@ -1,7 +1,9 @@
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import app
 from endpoints import router
+
+app = FastAPI(title="AI Chat Manager")
 
 app.add_middleware(
     CORSMiddleware,
