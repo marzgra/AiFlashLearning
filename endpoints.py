@@ -1,33 +1,38 @@
 import uuid
+from datetime import datetime
 
-from agents.extensions.memory.sqlalchemy_session import SQLAlchemySession
+from agents import Session
+from agents.extensions.memory import SQLAlchemySession
 from fastapi import Body, Request, APIRouter, Depends
-from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import StreamingResponse
 
 from ai_client import run_agent, get_ai_summary
-from database import db_engine, get_topic, get_db, get_history_query, paginate, today_review, get_stats, update_stats
-from main import app
+from database import db_engine, get_topic, get_db, get_history_query, paginate, today_review, get_stats, update_stats, \
+    AgentSession
 from schemas import PageParams, History
-from session_handler import get_session
 from sm2 import update_topic_with_sm2
 
 router = APIRouter()
 
 @router.post("/session")
-async def create_session():
-    session_id = uuid.uuid4()
-    session = SQLAlchemySession(session_id=session_id.__str__(), engine=db_engine, create_tables=True)
-    app.state.sessions[session_id] = session
-    return {"id": session_id}
+async def create_session(db: AsyncSession = Depends(get_db)):
+    session_id = uuid.uuid4().__str__()
+    db_session = AgentSession(
+        session_id=session_id,
+        created_at=datetime.now(),
+        updated_at=datetime.now()
+    )
+    db.add(db_session)
+    await db.commit()
+    return {"session_id": session_id}
 
 
 @router.post("/session/{session_id}")
 async def chat(session_id: str,
                request: Request,
-               user_input: str = Body(..., embed=True),
-               db: AsyncSession = Depends(get_db)):
-    session = await get_session(session_id, db)
+               user_input: str = Body(..., embed=True)):
+    session = SQLAlchemySession(session_id=session_id, engine=db_engine)
     return StreamingResponse(event_generator(user_input, session, request), media_type="text/event-stream")
     #  for debug
     # return await event_generator(user_input, session, request)
@@ -35,19 +40,19 @@ async def chat(session_id: str,
 
 @router.get("/session/{session_id}/close")
 async def end_session(session_id: str, db: AsyncSession = Depends(get_db)):
-    session = await get_session(session_id, db)
+    session = SQLAlchemySession(session_id=session_id, engine=db_engine)
     topic = await get_topic(db, session_id)
-    # if topic.has_opened_session:
-    ai_summary = await get_ai_summary(session)
-    topic = await update_topic_with_sm2(db, topic, ai_summary)
-    await update_stats(db)
-    return {
-        "topic": topic.topic,
-        "score": ai_summary.score,
-        "repeat": ai_summary.repeat,
-        "next": ai_summary.next
-    }
-    # return { "error": "Session already closed" }
+    if topic.has_opened_session:
+        ai_summary = await get_ai_summary(session)
+        topic = await update_topic_with_sm2(db, topic, ai_summary)
+        await update_stats(db)
+        return {
+            "topic": topic.topic,
+            "score": ai_summary.score,
+            "repeat": ai_summary.repeat,
+            "next": ai_summary.next
+        }
+    return { "error": "Session already closed" }
 
 
 @router.get("/history")
@@ -65,7 +70,7 @@ async def stats(db: AsyncSession = Depends(get_db)):
     return await get_stats(db)
 
 async def event_generator(prompt: str,
-                          session: SQLAlchemySession,
+                          session: Session,
                           request: Request):
     async for chunk in run_agent(prompt, session):
         if await request.is_disconnected():

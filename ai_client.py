@@ -1,5 +1,4 @@
-from agents import Agent, Runner
-from agents.extensions.memory import SQLAlchemySession
+from agents import Agent, Runner, Session
 from openai.types.responses.response_text_delta_event import ResponseTextDeltaEvent
 
 from schemas import ReviewResponse
@@ -57,9 +56,10 @@ triage_agent = Agent(
 )
 
 
-async def run_agent(prompt: str, session: SQLAlchemySession):
+async def run_agent(prompt: str, session: Session):
     try:
         result = Runner.run_streamed(triage_agent, prompt, session=session)
+        print(result)
         async for event in result.stream_events():
             if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                 print(event)
@@ -70,6 +70,6 @@ async def run_agent(prompt: str, session: SQLAlchemySession):
         print(f"Wystąpił błąd: {e}")
 
 
-async def get_ai_summary(session: SQLAlchemySession):
+async def get_ai_summary(session: Session):
     result = await Runner.run(summary_agent, "Stwórz podsumowanie naszej rozmowy", session=session)
     return result.final_output

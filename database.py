@@ -1,4 +1,6 @@
-from datetime import datetime, date, timedelta
+import os
+from datetime import datetime, timedelta
+from typing import Type
 
 from pydantic import BaseModel
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, select, func, Boolean
@@ -8,10 +10,17 @@ from sqlalchemy.sql.expression import desc
 
 from schemas import PageParams, PagedResponseSchema, T
 
-SQLALCHEMY_DATABASE_URL = "sqlite+aiosqlite:///./app.db"
+DB_URL = "postgresql+asyncpg://user:password@localhost:5432/ai-flash-learning-db"
+
+SQLALCHEMY_DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    DB_URL
+)
+
 db_engine = create_async_engine(
     SQLALCHEMY_DATABASE_URL,
-    connect_args={"timeout": 30}
+    pool_pre_ping=True,
+    echo=False
 )
 Base = declarative_base()
 
@@ -19,9 +28,15 @@ Base = declarative_base()
 class AgentSession(Base):
     __tablename__ = "agent_sessions"
     session_id = Column(String, primary_key=True, index=True)
-    created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), nullable=False)
 
+class Message(Base):
+    __tablename__ = "agent_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, ForeignKey("agent_sessions.session_id", ondelete="CASCADE"))
+    message_data = Column(String, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
 class Topic(Base):
     __tablename__ = "session_topic"
@@ -50,6 +65,14 @@ class Streak(Base):
     current_streak = Column(Integer, nullable=False)
     longest_streak = Column(Integer, nullable=False)
     last_session_date = Column(DateTime, nullable=False)
+    
+    
+async def get_session(db: AsyncSession, session_id: str):
+    result = await db.execute(select(AgentSession).where(AgentSession.session_id == session_id))
+    session = result.scalars().first()
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+    return session
 
 
 async def get_topic(db: AsyncSession, session_id: str):
@@ -117,7 +140,7 @@ def today_review():
     )
 
 
-async def paginate(page_params: PageParams, query, db: AsyncSession, ResponseSchema: BaseModel) -> PagedResponseSchema[T]:
+async def paginate(page_params: PageParams, query, db: AsyncSession, response_schema: Type[BaseModel]) -> PagedResponseSchema[T]:
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
@@ -132,7 +155,7 @@ async def paginate(page_params: PageParams, query, db: AsyncSession, ResponseSch
         total=total,
         page=page_params.page,
         size=page_params.size,
-        results=[ResponseSchema.from_orm(item) for item in items],
+        results=[response_schema.model_validate(item) for item in items],
     )
 
 async def update_stats(db: AsyncSession):
@@ -140,7 +163,7 @@ async def update_stats(db: AsyncSession):
 
     result = await db.execute(
         select(Streak)
-        .where(func.date(Streak.last_session_date) == yesterday)
+        .where(func.date(Streak.last_session_date) == func.date(yesterday))
     )
     streak = result.scalars().first()
 
