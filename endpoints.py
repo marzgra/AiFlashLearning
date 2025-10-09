@@ -15,6 +15,10 @@ from sm2 import update_topic_with_sm2
 
 router = APIRouter()
 
+@router.get("/heartbeat")
+async def heartbeat():
+    return {"status": "I'm alive!"}, 200
+
 @router.post("/session")
 async def create_session(db: AsyncSession = Depends(get_db)):
     session_id = uuid.uuid4().__str__()
